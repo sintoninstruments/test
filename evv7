@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChargeBug: An EV Charging Forecast</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      user-select: none;
+    }
+
+    #statusBox, #greenWindow, #nextGreenHour, #nextGreenNight {
+      width: 100%;
+      padding: 10px;
+      text-align: center;
+      font-weight: bold;
+      color: white;
+      margin-bottom: 10px;
+    }
+
+    #lastUpdated {
+      margin-bottom: 10px;
+      font-style: italic;
+      text-align: center;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+
+    #calendarDayStrip,
+    #calendarNightStrip,
+    #calendarPlainStrip {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      width: 100%;
+    }
+
+    .calendar-day,
+    .calendar-night,
+    .calendar-plain {
+      width: 80px;
+      height: 40px;
+      text-align: center;
+      padding: 4px;
+      border-radius: 6px;
+      font-size: 16px;
+      background-color: #FFFFFF;
+      border: 1px solid #FFF;
+    }
+
+    .green-day { background-color: #FFEB3B; color: #333; }   /* Yellow */
+    .green-night { background-color: #2196F3; }              /* Blue */
+
+@media (max-width: 600px) {
+  #calendarContainer {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  #calendarDayStrip,
+  #calendarNightStrip,
+  #calendarPlainStrip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 0 0 100px; /* fixed width per column */
+    max-width: 50px;
+  }
+
+  .calendar-day,
+  .calendar-night,
+  .calendar-plain {
+    font-size: 12px;
+    width: 100%;
+    margin-bottom: 6px;
+  }
+}
+</style>
+
+  <script>
+document.addEventListener("contextmenu", e => e.preventDefault());
+    document.addEventListener("copy", e => e.preventDefault());
+    document.addEventListener("cut", e => e.preventDefault());
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && ["c", "x", "u", "s"].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+    });
+  </script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+</head>
+
+<body>
+  <h2>ChargeBug: An EV Charging Forecast</h2>
+  <div id="statusBox">Loading forecast status...</div>
+  <div id="greenWindow"></div>
+  <div id="nextGreenHour"></div>
+<div id="calendarContainer">
+  <div id="calendarPlainStrip"></div>  
+  <div id="calendarDayStrip"></div>
+  <div id="calendarNightStrip"></div> 
+</div>
+<canvas id="evForecastChart" style="max-width: 1000px; height: 400px; margin: 40px auto;"></canvas>
+  <div id="lastUpdated"></div>
+  <button onclick="toggleTableVisibility()" style="margin-bottom: 12px;">
+    Show/Hide Data Table
+  </button>
+  <table id="csvTable"></table>
+
+  <script>
+    window.onload = importJSON;
+
+  function toggleTableVisibility() {
+  	const table = document.getElementById("csvTable");
+ 	 if (!table) return;
+
+  const isHidden = table.style.display === "none";
+  table.style.display = isHidden ? "table" : "none";
+}
+   
+ function subtractOneHour(timestamp) {
+      const [datePart, timePart] = timestamp.split(" ");
+      const [month, day, year] = datePart.split("/").map(Number);
+      const [hour, minute, second] = timePart.split(":").map(Number);
+      const originalDate = new Date(year, month - 1, day, hour, minute, second);
+      originalDate.setHours(originalDate.getHours() - 1);
+      return originalDate;
+    }
+
+async function importJSON() {
+  const url = "https://weis-api.vercel.app/api/weis";
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Status: " + response.status);
+
+    const json = await response.json();
+
+    const timestamp = new Date().toLocaleString("en-US", { timeZone: "America/Denver" });
+    document.getElementById("lastUpdated").textContent = `Last updated: ${timestamp}`;
+
+    displayJSON(json.rows);
+
+  } catch (error) {
+    document.getElementById("lastUpdated").textContent = "Download failed. " + error;
+  }
+}   
+
+function displayJSON(rows) {
+  const newHeaders = [
+    "Interval",
+    "MTLF",
+    "MTSF",
+    "MTWF",
+    "MTSFx1.4",
+    "MTLFCorrected",
+    "Green Fraction",
+    "Solar Fraction",
+    "Wind Fraction",
+    "Green",
+    "Interval (MT)"
+  ];
+
+  const dataRows = [];
+
+  rows.forEach(row => {
+    const mtlfVal = parseFloat(row["MTLF"]) || 0;
+    const mtsfVal = parseFloat(row["MTSF"]) || 0;
+    const mtwfVal = parseFloat(row["MTWF"]) || 0;
+
+    if (!mtlfVal) return;
+
+    const mtsf1_4 = mtsfVal * 1.4;
+    const mtlfx = mtlfVal + mtsfVal * 0.4;
+    const fraction = mtlfx !== 0 ? (mtsf1_4 + mtwfVal) / mtlfx : 0;
+    const solarFraction = mtlfx !== 0 ? mtsf1_4 / mtlfx : 0;
+    const windFraction = fraction - solarFraction;
+
+    const rawInterval = row["Interval"];
+    const mtDate = subtractOneHour(rawInterval);
+
+    const mtOffset = -6;
+    const localDate = new Date(mtDate.getTime() + mtOffset * 3600 * 1000);
+    const mtString = localDate.toISOString();
+
+    const rowData = [
+      rawInterval,
+      mtlfVal.toFixed(2),
+      mtsfVal.toFixed(2),
+      mtwfVal.toFixed(2),
+      mtsf1_4.toFixed(2),
+      mtlfx.toFixed(2),
+      fraction.toFixed(2),
+      solarFraction.toFixed(2),
+      windFraction.toFixed(2),
+      "0",
+      mtString
+    ];
+
+    dataRows.push({ rowData, mtDate });
+  });
+
+  dataRows.sort((a, b) => a.mtDate - b.mtDate);
+
+  const fractionAvg =
+    dataRows.reduce((sum, d) => sum + parseFloat(d.rowData[6]), 0) /
+    dataRows.length;
+
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const nowTime = now.getTime();
+  let currentGreen = null;
+
+  const intervals = [];
+
+  const table = document.getElementById("csvTable");
+  table.innerHTML = "";
+
+  const headerRow = table.insertRow();
+  newHeaders.forEach(h => {
+    const th = document.createElement("th");
+    th.textContent = h;
+    headerRow.appendChild(th);
+  });
+
+  dataRows.forEach(({ rowData, mtDate }) => {
+    const fraction = parseFloat(rowData[6]);
+    const threshold = Math.min(fractionAvg, 0.45);
+    const green = fraction > threshold ? "1" : "0";
+    rowData[9] = green;
+
+    const tr = table.insertRow();
+    const hour = mtDate.getHours();
+    if (hour >= 21 || hour < 8) {
+      tr.style.backgroundColor = "#eee";
+    }
+
+    rowData.forEach(cell => {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      tr.appendChild(td);
+    });
+
+    mtDate.setMinutes(0, 0, 0);
+    intervals.push({ time: mtDate.getTime(), date: mtDate, green });
+
+    if (mtDate.getTime() === nowTime) currentGreen = green;
+  });
+
+  const statusBox = document.getElementById("statusBox");
+  statusBox.style.backgroundColor =
+    currentGreen === "1" ? "green" :
+    currentGreen === "0" ? "red" : "gray";
+
+  statusBox.textContent =
+    `Current grid status: ${
+      currentGreen === "1" ? "Clean and GREEN!" :
+      currentGreen === "0" ? "Carbon-Heavy" :
+      "Unknown"
+    }`;
+
+
+const greenWindowDiv = document.getElementById("greenWindow");
+
+if (currentGreen === "1") {
+  let duration = 0;
+  for (let i = 0; i < intervals.length; i++) {
+    if (intervals[i].time === nowTime) {
+      for (let j = i; j < intervals.length && intervals[j].green === "1"; j++) duration++;
+      break;
+    }
+  }
+  greenWindowDiv.textContent = `Green for the next ${duration} hour${duration > 1 ? "s" : ""}`;
+  greenWindowDiv.style.backgroundColor = "#006400";
+} else if (currentGreen === "0") {
+  let duration = 0;
+  for (let i = 0; i < intervals.length; i++) {
+    if (intervals[i].time === nowTime) {
+      for (let j = i; j < intervals.length && intervals[j].green === "0"; j++) duration++;
+      break;
+    }
+  }
+  greenWindowDiv.textContent = `Grid will be green in ${duration} hour${duration > 1 ? "s" : ""}`;
+  greenWindowDiv.style.backgroundColor = "#444"; // neutral tone for non-green
+}
+
+// Build night windows
+const nightWindows = {};
+intervals.forEach(i => {
+  const date = new Date(i.date);
+  const hour = date.getHours();
+  let nightKeyDate = new Date(date);
+
+  if (hour >= 21) {
+    // Use same date
+  } else if (hour < 8) {
+    nightKeyDate.setDate(nightKeyDate.getDate() - 1);
+  } else {
+    return; // Skip non-night hours
+  }
+
+  const nightKey = nightKeyDate.toLocaleDateString("en-CA"); // YYYY-MM-DD
+  if (!nightWindows[nightKey]) nightWindows[nightKey] = [];
+  nightWindows[nightKey].push(i);
+});
+
+
+
+
+const calendarDayDiv = document.getElementById("calendarDayStrip");
+const calendarNightDiv = document.getElementById("calendarNightStrip");
+calendarDayDiv.innerHTML = "<h3 style='margin-bottom: 8px;'>☀️Day&nbsp;&nbsp;&nbsp;</h3>";
+calendarNightDiv.innerHTML = "<h3 style='margin-bottom: 8px;'>💨Night</h3>";
+
+const calendarMap = {}; // key: date string, value: { dayGreenCount, nightGreenCount }
+
+intervals.forEach(i => {
+  const date = i.date instanceof Date ? i.date : new Date(i.date);
+  const hour = date.getHours();
+  const key = date.toLocaleDateString("en-CA"); // YYYY-MM-DD
+
+  if (!calendarMap[key]) calendarMap[key] = { dayGreenCount: 0, nightGreenCount: 0 };
+
+  if (hour >= 8 && hour < 21 && i.green === "1") {
+    calendarMap[key].dayGreenCount++;
+  }
+
+  if (hour >= 21 || hour < 8) {
+    const nightKeyDate = new Date(date);
+    if (hour < 8) nightKeyDate.setDate(nightKeyDate.getDate() - 1);
+    const nightKey = nightKeyDate.toLocaleDateString("en-CA");
+
+    if (!calendarMap[nightKey]) calendarMap[nightKey] = { dayGreenCount: 0, nightGreenCount: 0 };
+    if (i.green === "1") calendarMap[nightKey].nightGreenCount++;
+  }
+});
+
+Object.keys(calendarMap).slice(0, 7).forEach(dateStr => {
+  const { dayGreenCount, nightGreenCount } = calendarMap[dateStr];
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const localDate = new Date(year, month - 1, day);
+  const dayName = localDate.toLocaleDateString(undefined, { weekday: "short" });
+
+  // Day calendar
+const dayDiv = document.createElement("div");
+dayDiv.className = "calendar-day";
+dayDiv.style.backgroundColor = dayGreenCount >= 5 ? "#FFEB3B" : "#B0BEC5"; // yellow or gray
+
+dayDiv.innerHTML = `
+
+     ${dayGreenCount} green hour${dayGreenCount !== 1 ? "s" : ""}
+  </div>
+`;
+
+calendarDayDiv.appendChild(dayDiv);
+
+// Night calendar
+const nightDiv = document.createElement("div");
+nightDiv.className = "calendar-night";
+nightDiv.style.backgroundColor = nightGreenCount > 5 ? "#81D4FA" : "#B0BEC5"; // blue or gray
+
+// Add label and green hour count
+nightDiv.innerHTML = `
+    ${nightGreenCount} green hour${nightGreenCount !== 1 ? "s" : ""}
+  </div>
+`;
+
+calendarNightDiv.appendChild(nightDiv);
+});
+const calendarPlainDiv = document.getElementById("calendarPlainStrip");
+calendarPlainDiv.innerHTML = "<h3 style='margin-bottom: 8px;'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp</h3>";
+
+Object.keys(calendarMap).slice(0, 7).forEach(dateStr => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const localDate = new Date(year, month - 1, day);
+  const dayName = localDate.toLocaleDateString(undefined, { weekday: "short" });
+
+  const plainDiv = document.createElement("div");
+  plainDiv.className = "calendar-plain";
+  plainDiv.style.backgroundColor = "#FFFFFF"; // white background
+  plainDiv.style.border = "1px solid #FFF";
+  plainDiv.style.padding = "4px";
+  plainDiv.style.borderRadius = "6px";
+  plainDiv.style.textAlign = "center";
+
+
+  plainDiv.innerHTML = `
+    <div>${dayName}</div>
+    <div>${dateStr.slice(5)}</div>
+  `;
+
+  calendarPlainDiv.appendChild(plainDiv);
+});
+document.getElementById("csvTable").style.display = "none";
+
+const intervalLabels = [];
+const solarStack = [];
+const windStack = [];
+const fractionLine = [];
+const fractionColors = [];
+
+dataRows.forEach(d => {
+  const label = d.rowData[d.rowData.length - 1]; // Use raw Interval (MT) string
+  intervalLabels.push(label);
+
+
+
+  const solarFraction = parseFloat(d.rowData[d.rowData.length - 4]);
+  const windFraction = parseFloat(d.rowData[d.rowData.length - 3]);
+  const fraction = parseFloat(d.rowData[d.rowData.length - 5]);
+
+  const clamped = Math.max(0, Math.min(fraction, 1));
+  const lightness = 5 + clamped * 55; // near-black to bright green
+  const color = `hsl(120, 100%, ${lightness}%)`;
+
+  solarStack.push(isNaN(solarFraction) ? 0 : solarFraction);
+  windStack.push(isNaN(windFraction) ? 0 : windFraction);
+  fractionLine.push(isNaN(fraction) ? 0 : fraction);
+  fractionColors.push(color);
+});
+
+const ctx = document.getElementById("evForecastChart").getContext("2d");
+new Chart(ctx, {
+  type: "bar",
+  data: {
+    labels: intervalLabels,
+    datasets: [
+      {
+        label: "Solar Fraction",
+        data: solarStack,
+        backgroundColor: "rgba(255, 206, 86, 0.7)",
+        stack: "clean"
+      },
+      {
+        label: "Wind Fraction",
+        data: windStack,
+        backgroundColor: "rgba(54, 162, 235, 0.7)",
+        stack: "clean"
+      },
+      {
+        label: "Green Fraction",
+        type: "line",
+        order: 99,
+        data: fractionLine,
+        borderWidth: 7, // thicker line
+        pointRadius: 0,
+        fill: false,
+        tension: 0.3,
+        segment: {
+          borderColor: ctx => {
+            const i = ctx.p0DataIndex;
+            return fractionColors[i] || "hsl(120, 100%, 5%)";
+          }
+        }
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      title: {
+        display: false
+      },
+      legend: {
+        position: "top"
+      },
+tooltip: {
+  mode: "index",
+  intersect: false,
+  callbacks: {
+    title: function(tooltipItems) {
+      const raw = tooltipItems[0].label; // ISO string like "2025-10-30T00:00:00.000Z"
+
+      const [datePart, timePart] = raw.split("T");
+      const [year, month, day] = datePart.split("-");
+      const hour = parseInt(timePart.split(":")[0]);
+
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const monthLabel = monthNames[parseInt(month) - 1];
+      const dayLabel = parseInt(day);
+
+      const formattedHour =
+        hour === 0 ? "12 AM" :
+        hour < 12 ? `${hour} AM` :
+        hour === 12 ? "12 PM" :
+        `${hour - 12} PM`;
+
+      return `${monthLabel} ${dayLabel}, ${formattedHour}`;
+    }
+  }
+}
+    },
+    scales: {
+      x: {
+        stacked: true,
+        title: {
+          display: true,
+          text: "Interval (MT)"
+        },
+ticks: {
+  callback: function(value, index) {
+    const raw = this.chart.data.labels[index]; // ISO string already in MT
+    const hourPart = raw.split("T")[1].split(":")[0]; // "10" from "2025-10-30T10:00:00.000Z"
+
+    if (hourPart === "00") {
+      const [year, month, day] = raw.split("T")[0].split("-");
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return `${monthNames[parseInt(month) - 1]} ${parseInt(day)}`;
+    }
+
+    return "";
+  },
+  autoSkip: false,
+  maxRotation: 0,
+  minRotation: 0
+    },
+    grid: {
+      display: false
+    }
+
+      },
+      y: {
+        stacked: true,
+        min: 0,
+        max: 1,
+        title: {
+          display: true,
+          text: "Percent Clean"
+        },
+        grid: {
+          display: false
+        }
+      }
+    }
+  }
+});
+}
+}
+
+  </script>
+</body>
+</html>
