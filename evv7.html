@@ -95,19 +95,7 @@
 }
 </style>
 
-  <script>
-document.addEventListener("contextmenu", e => e.preventDefault());
-    document.addEventListener("copy", e => e.preventDefault());
-    document.addEventListener("cut", e => e.preventDefault());
-    document.addEventListener("keydown", e => {
-      if ((e.ctrlKey || e.metaKey) && ["c", "x", "u", "s"].includes(e.key.toLowerCase())) {
-        e.preventDefault();
-      }
-    });
-  </script>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 
 </head>
 
@@ -128,8 +116,23 @@ document.addEventListener("contextmenu", e => e.preventDefault());
   </button>
   <table id="csvTable"></table>
 
-  <script>
-    window.onload = importJSON;
+</body>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+<script>
+
+document.addEventListener("contextmenu", e => e.preventDefault());
+    document.addEventListener("copy", e => e.preventDefault());
+    document.addEventListener("cut", e => e.preventDefault());
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && ["c", "x", "u", "s"].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+    });
+    
+window.onload = importJSON;
 
   function toggleTableVisibility() {
   	const table = document.getElementById("csvTable");
@@ -324,7 +327,6 @@ intervals.forEach(i => {
   if (!nightWindows[nightKey]) nightWindows[nightKey] = [];
   nightWindows[nightKey].push(i);
 });
-
 
 
 
@@ -559,5 +561,4 @@ ticks: {
 }
 
   </script>
-</body>
 </html>
