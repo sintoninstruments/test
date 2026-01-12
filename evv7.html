@@ -94,32 +94,52 @@ tr:nth-child(even) {
   background: #fafafa;
 }
 
+
+
 /* Calendar Container */
 #calendarContainer {
   margin-top: 20px;
   display: flex;
   flex-direction: column;
-  align-items: center;   /* centers all three rows */
+  align-items: stretch;
   gap: 10px;
 }
 
-/* Each row */
+/* Default: mobile behavior (scroll + left aligned) */
 #calendarDayStrip,
 #calendarNightStrip,
 #calendarPlainStrip {
   display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  justify-content: flex-start;
   align-items: center;
-  justify-content: center;   /* centers the row horizontally */
   gap: 10px;
+
+  min-width: max-content; /* ensures scroll instead of wrap */
+}
+
+/* Desktop: center the whole strip */
+@media (min-width: 800px) {
+  #calendarDayStrip,
+  #calendarNightStrip,
+  #calendarPlainStrip {
+    justify-content: flex-start;   /* left aligned */
+    overflow-x: visible;           /* no scrollbars */
+  }
 }
 
 /* Header cells */
 #calendarDayStrip h3,
 #calendarNightStrip h3,
 #calendarPlainStrip h3 {
-  width: 60px;               /* fixed width keeps columns aligned */
+  width: 60px;
   text-align: right;
   margin: 0;
+  flex: 0 0 auto;
 }
 
 /* Calendar boxes */
@@ -137,15 +157,16 @@ tr:nth-child(even) {
   font-weight: 600;
   font-size: 14px;
   text-align: center;
+  flex: 0 0 auto;
 }
 
 /* Friendly colors */
 .calendar-day {
-  background: #FFFDE7; /* soft yellow */
+  background: #FFFDE7;
 }
 
 .calendar-night {
-  background: #E3F2FD; /* soft blue */
+  background: #E3F2FD;
 }
 
 .green-day {
@@ -174,19 +195,51 @@ button:hover {
   background: var(--green-dark);
 }
 
-/* Mobile */
+/* Mobile calendar box scaling */
 @media (max-width: 600px) {
   .calendar-day,
   .calendar-night,
   .calendar-plain {
-    width: 70px;
-    height: 40px;
-    font-size: 12px;
+    width: 22vw;
+    height: 12vw;
+    font-size: 3vw;
   }
+}
 
-  button {
-    width: 100%;
+/* Table scroll on mobile */
+@media (max-width: 600px) {
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
   }
+}
+
+/* Mobile padding */
+@media (max-width: 600px) {
+  body {
+    padding: 10px;
+  }
+}
+
+button {
+  width: 100%;
+}
+
+/* Chart scroll wrapper behaves like the calendar strip */
+#chartScrollWrapper {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Canvas must NOT shrink */
+#evForecastChart {
+  display: block;
+  height: 300px;
+  min-width: max-content;   /* same trick as calendar */
+  width: auto;              /* allow natural width */
 }
 
   </style>
@@ -209,8 +262,8 @@ button:hover {
     <div id="calendarNightStrip"></div>
   </div>
 
-<canvas id="evForecastChart" width="1000" height="400"
-        style="margin: 40px auto; display:block;"></canvas>
+<canvas id="evForecastChart"></canvas>
+
 
   <div id="lastUpdated"></div>
 
@@ -510,83 +563,108 @@ const mtString = toMountainISO(mtDate);
 }    
 
 // Build day/night calendar
-      const calendarDayDiv = document.getElementById("calendarDayStrip");
-      const calendarNightDiv = document.getElementById("calendarNightStrip");
-      const calendarPlainDiv = document.getElementById("calendarPlainStrip");
+const calendarDayDiv = document.getElementById("calendarDayStrip");
+const calendarNightDiv = document.getElementById("calendarNightStrip");
+const calendarPlainDiv = document.getElementById("calendarPlainStrip");
 
-      if (calendarDayDiv && calendarNightDiv && calendarPlainDiv) {
-        calendarDayDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Day</h3>";
-        calendarNightDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Night</h3>";
-        calendarPlainDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>&nbsp;</h3>";
+// We'll track how many days we actually render
+let renderedDayCount = 0;
 
-        const calendarMap = {}; // key: date string, value: { dayHours: [], nightHours: [] }
+if (calendarDayDiv && calendarNightDiv && calendarPlainDiv) {
+  calendarDayDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Day</h3>";
+  calendarNightDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Night</h3>";
+  calendarPlainDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>&nbsp;</h3>";
 
-intervals.forEach(i => {
-  const date = i.date instanceof Date ? i.date : new Date(i.date);
-  const hour = date.getHours();
-  const key = date.toLocaleDateString("en-CA"); // YYYY-MM-DD
+  const calendarMap = {}; // key: date string, value: { dayHours: [], nightHours: [] }
 
-  if (!calendarMap[key]) {
-    calendarMap[key] = { dayHours: [], nightHours: [] };
-  }
+  intervals.forEach(i => {
+    const date = i.date instanceof Date ? i.date : new Date(i.date);
+    const hour = date.getHours();
+    const key = date.toLocaleDateString("en-CA"); // YYYY-MM-DD
 
-  // Day: 8–21 (8:00–21:00)
-  if (hour >= 8 && hour < 21 && i.green === "1") {
-    calendarMap[key].dayHours.push(hour);
-  }
-
-  // Night hours belong to the "night" of that day (21–24 and 0–8 next day)
-  if (hour >= 21 || hour < 8) {
-    const nightKeyDate = new Date(date);
-    if (hour < 8) nightKeyDate.setDate(nightKeyDate.getDate() - 1);
-    const nightKey = nightKeyDate.toLocaleDateString("en-CA");
-
-    if (!calendarMap[nightKey]) {
-      calendarMap[nightKey] = { dayHours: [], nightHours: [] };
+    if (!calendarMap[key]) {
+      calendarMap[key] = { dayHours: [], nightHours: [] };
     }
-    if (i.green === "1") {
-      calendarMap[nightKey].nightHours.push(hour);
+
+    // Day: 8–21 (8:00–21:00)
+    if (hour >= 8 && hour < 21 && i.green === "1") {
+      calendarMap[key].dayHours.push(hour);
     }
-  }
-});
 
-Object.keys(calendarMap)
-  .sort()
-  .slice(1, 8)
-  .forEach(dateStr => {
-    const entry = calendarMap[dateStr];
-    const dayHours = entry?.dayHours || [];
-    const nightHours = entry?.nightHours || [];
+    // Night hours belong to the "night" of that day (21–24 and 0–8 next day)
+    if (hour >= 21 || hour < 8) {
+      const nightKeyDate = new Date(date);
+      if (hour < 8) nightKeyDate.setDate(nightKeyDate.getDate() - 1);
+      const nightKey = nightKeyDate.toLocaleDateString("en-CA");
 
-    const [year, month, day] = dateStr.split("-").map(Number);
-    const localDate = new Date(year, month - 1, day);
-    const dayName = localDate.toLocaleDateString(undefined, { weekday: "short" });
-
-    // Plain label
-    const plainDiv = document.createElement("div");
-    plainDiv.className = "calendar-plain";
-    plainDiv.textContent = dayName;
-    calendarPlainDiv.appendChild(plainDiv);
-
-    // Day calendar
-    const dayDiv = document.createElement("div");
-    dayDiv.className = "calendar-day";
-    dayDiv.style.backgroundColor = dayHours.length >= 5 ? "#FFEB3B" : "#B0BEC5";
-    dayDiv.innerHTML = hoursToRanges(dayHours);
-    calendarDayDiv.appendChild(dayDiv);
-
-    // Night calendar
-    const nightDiv = document.createElement("div");
-    nightDiv.className = "calendar-night";
-    nightDiv.style.backgroundColor = nightHours.length >= 5 ? "#81D4FA" : "#B0BEC5";
-    nightDiv.innerHTML = hoursToRanges(nightHours);
-    calendarNightDiv.appendChild(nightDiv);
+      if (!calendarMap[nightKey]) {
+        calendarMap[nightKey] = { dayHours: [], nightHours: [] };
+      }
+      if (i.green === "1") {
+        calendarMap[nightKey].nightHours.push(hour);
+      }
+    }
   });
 
+  Object.keys(calendarMap)
+    .sort()
+    .slice(1, 8)
+    .forEach(dateStr => {
+      const entry = calendarMap[dateStr];
+      const dayHours = entry?.dayHours || [];
+      const nightHours = entry?.nightHours || [];
+
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const localDate = new Date(year, month - 1, day);
+      const dayName = localDate.toLocaleDateString(undefined, { weekday: "short" });
+
+      // Plain label
+      const plainDiv = document.createElement("div");
+      plainDiv.className = "calendar-plain";
+      plainDiv.textContent = dayName;
+      calendarPlainDiv.appendChild(plainDiv);
+
+      // Day calendar
+      const dayDiv = document.createElement("div");
+      dayDiv.className = "calendar-day";
+      dayDiv.style.backgroundColor = dayHours.length >= 5 ? "#FFEB3B" : "#B0BEC5";
+      dayDiv.innerHTML = hoursToRanges(dayHours);
+      calendarDayDiv.appendChild(dayDiv);
+
+      // Night calendar
+      const nightDiv = document.createElement("div");
+      nightDiv.className = "calendar-night";
+      nightDiv.style.backgroundColor = nightHours.length >= 5 ? "#81D4FA" : "#B0BEC5";
+      nightDiv.innerHTML = hoursToRanges(nightHours);
+      calendarNightDiv.appendChild(nightDiv);
+
+      renderedDayCount++;
+    });
 }
+
+// ---- NEW: compute a deterministic "calendar width" and apply to chart ----
+
+// These should match your CSS:
+// .calendar-*- box width, gap between boxes, and header width
+const BOX_WIDTH = 102;      // .calendar-day/.calendar-night/.calendar-plain width
+const BOX_GAP = 10;         // gap: 10px in the flex container
+const HEADER_WIDTH = 60;    // h3 width in CSS
+
+// total width = header + N * (box + gap)
+const calendarWidthPx =
+  renderedDayCount > 0
+    ? HEADER_WIDTH + renderedDayCount * (BOX_WIDTH + BOX_GAP)
+    : 900; // fallback if something goes wrong
 
 // Build stacked solar/wind chart with dynamic green fraction line
 const chartCanvas = document.getElementById("evForecastChart");
+
+// Apply width/height to the canvas so Chart.js uses this size
+if (chartCanvas) {
+  chartCanvas.style.width = calendarWidthPx + "px"; // layout width
+  chartCanvas.width = calendarWidthPx;              // drawing width
+  chartCanvas.height = 300;
+}
 
 if (chartCanvas && window.Chart) {
   const styles = getComputedStyle(document.documentElement);
@@ -601,7 +679,7 @@ if (chartCanvas && window.Chart) {
   const fractionColors = [];
 
   dataRows.forEach(d => {
-    const label = d.rowData[d.rowData.length - 1]; 
+    const label = d.rowData[d.rowData.length - 1];
     intervalLabels.push(label);
 
     const solarFraction = parseFloat(d.rowData[d.rowData.length - 4]);
@@ -656,39 +734,40 @@ if (chartCanvas && window.Chart) {
       ]
     },
     options: {
-      responsive: false,
+      responsive: false,          // important: don't shrink with window
+      maintainAspectRatio: false, // allow fixed height
+
       plugins: {
         legend: { position: "top" },
-tooltip: {
-  mode: "index",
-  intersect: false,
-  callbacks: {
-    title: function(tooltipItems) {
-      // your existing date formatter stays the same
-      const raw = tooltipItems[0].label;
-      const [datePart, timePart] = raw.split("T");
-      const [year, month, day] = datePart.split("-");
-      const hour = parseInt(timePart.split(":")[0]);
+        tooltip: {
+          mode: "index",
+          intersect: false,
+          callbacks: {
+            title: function(tooltipItems) {
+              const raw = tooltipItems[0].label;
+              const [datePart, timePart] = raw.split("T");
+              const [year, month, day] = datePart.split("-");
+              const hour = parseInt(timePart.split(":")[0]);
 
-      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const monthLabel = monthNames[parseInt(month) - 1];
-      const dayLabel = parseInt(day);
+              const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+              const monthLabel = monthNames[parseInt(month) - 1];
+              const dayLabel = parseInt(day);
 
-      const formattedHour =
-        hour === 0 ? "12 AM" :
-        hour < 12 ? `${hour} AM` :
-        hour === 12 ? "12 PM" :
-        `${hour - 12} PM`;
+              const formattedHour =
+                hour === 0 ? "12 AM" :
+                hour < 12 ? `${hour} AM` :
+                hour === 12 ? "12 PM" :
+                `${hour - 12} PM`;
 
-      return `${monthLabel} ${dayLabel}, ${formattedHour}`;
-    },
-    label: function(context) {
-      const label = context.dataset.label || "";
-      const value = context.raw;
-      return `${label}: ${Math.round(value * 100)}%`;
-    }
-  }
-}
+              return `${monthLabel} ${dayLabel}, ${formattedHour}`;
+            },
+            label: function(context) {
+              const label = context.dataset.label || "";
+              const value = context.raw;
+              return `${label}: ${Math.round(value * 100)}%`;
+            }
+          }
+        }
       },
       scales: {
         x: {
@@ -712,21 +791,20 @@ tooltip: {
           },
           grid: { display: false }
         },
-y: {
-  stacked: true,
-  min: 0,
-  max: 1,
-  title: { display: true, text: "Percent Clean" },
-  grid: { display: false },
-  ticks: {
-    callback: value => Math.round(value * 100) + "%"
-  }
-}
+        y: {
+          stacked: true,
+          min: 0,
+          max: 1,
+          title: { display: true, text: "Percent Clean" },
+          grid: { display: false },
+          ticks: {
+            callback: value => Math.round(value * 100) + "%"
+          }
+        }
       }
     }
   });
-}
-    }
+}    }
 
     // Run after page load
     window.addEventListener("load", importJSON);
