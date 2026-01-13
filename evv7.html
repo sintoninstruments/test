@@ -53,11 +53,16 @@ h2 {
 #statusBox,
 #greenWindow,
 #nextGreenHour {
-  padding: 14px;
+  padding: 8px;
   border-radius: var(--radius);
   font-weight: 600;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   box-shadow: var(--shadow);
+}
+
+#greenWindow:empty,
+#nextGreenHour:empty {
+  display: none;
 }
 
 /* Last Updated */
@@ -98,7 +103,7 @@ tr:nth-child(even) {
 
 /* Calendar Container */
 #calendarContainer {
-  margin-top: 20px;
+  margin-top: 0px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -122,7 +127,7 @@ tr:nth-child(even) {
   min-width: max-content; /* ensures scroll instead of wrap */
 }
 
-/* Desktop: center the whole strip */
+/* Desktop: left align */
 @media (min-width: 800px) {
   #calendarDayStrip,
   #calendarNightStrip,
@@ -147,7 +152,7 @@ tr:nth-child(even) {
 .calendar-night,
 .calendar-plain {
   width: 102px;
-  height: 50px;
+  height: 45px;
   border-radius: var(--radius);
   background: white;
   box-shadow: var(--shadow);
@@ -200,8 +205,8 @@ button:hover {
   .calendar-day,
   .calendar-night,
   .calendar-plain {
-    width: 22vw;
-    height: 12vw;
+    width: 19vw;
+    height: 10vw;
     font-size: 3vw;
   }
 }
@@ -226,20 +231,21 @@ button {
   width: 100%;
 }
 
-/* Chart scroll wrapper behaves like the calendar strip */
-#chartScrollWrapper {
+/* Shared scroll wrapper for calendar + chart */
+#scrollWrapper {
   width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  display: block;
 }
 
 /* Canvas must NOT shrink */
 #evForecastChart {
   display: block;
   height: 300px;
-  min-width: max-content;   /* same trick as calendar */
-  width: auto;              /* allow natural width */
+  min-width: max-content; /* allow chart to grow wider than screen */
+  width: auto;
 }
 
   </style>
@@ -250,19 +256,20 @@ button {
 </head>
 
 <body>
-  <h2>ChargeBug: An EV Charging Forecast</h2>
 
   <div id="statusBox">Loading forecast status...</div>
   <div id="greenWindow"></div>
   <div id="nextGreenHour"></div>
 
+<div id="scrollWrapper">
   <div id="calendarContainer">
     <div id="calendarPlainStrip"></div>
     <div id="calendarDayStrip"></div>
     <div id="calendarNightStrip"></div>
   </div>
 
-<canvas id="evForecastChart"></canvas>
+  <canvas id="evForecastChart"></canvas>
+</div>
 
 
   <div id="lastUpdated"></div>
@@ -284,6 +291,7 @@ button {
         e.preventDefault();
       }
     });
+
 
 // Convert a Date object to an ISO-like string in Mountain Time
 function toMountainISO(date) {
@@ -363,68 +371,73 @@ function displayJSON(rows) {
     "Interval (MT)"
   ];
 
-  const dataRows = [];
+ let dataRows = [];
 
-  rows.forEach(row => {
-    // ⭐ Normalize keys (fixes " MTSF", " MTWF", etc.)
-    const cleanRow = {};
-    Object.keys(row).forEach(k => {
-      cleanRow[k.trim()] = row[k];
-    });
+document.getElementById("csvTable").style.display = "none";
 
-    // ⭐ Extract only the fields you care about
-    const mtlfVal = parseFloat(cleanRow["MTLF"]) || 0;
-    const mtsfVal = parseFloat(cleanRow["MTSF"]) || 0;
-    const mtwfVal = parseFloat(cleanRow["MTWF"]) || 0;
-
-    // Skip rows without MTLF (forecast missing)
-    if (!mtlfVal) return;
-
-    // Compute derived values
-    const mtsf1_4 = mtsfVal * 1.4;
-    const mtlfx = mtlfVal + mtsfVal * 0.4;
-    const fraction = mtlfx !== 0 ? (mtsf1_4 + mtwfVal) / mtlfx : 0;
-    const solarFraction = mtlfx !== 0 ? mtsf1_4 / mtlfx : 0;
-    const windFraction = fraction - solarFraction;
-
-// Time conversion
-const rawInterval = cleanRow["Interval"];
-
-// Parse "MM/DD/YYYY HH:mm:ss"
-const [datePart, timePart] = rawInterval.split(" ");
-const [month, day, year] = datePart.split("/").map(Number);
-const [hour, minute, second] = timePart.split(":").map(Number);
-
-// Build a real Date in MT
-const mtDate = new Date(year, month - 1, day, hour, minute, second);
-
-// Subtract one hour (your original logic)
-mtDate.setHours(mtDate.getHours() - 1);
-
-// Convert to ISO string in Mountain Time
-const mtString = toMountainISO(mtDate);
-
-    // Build row
-    const rowData = [
-      rawInterval,
-      mtlfVal.toFixed(2),
-      mtsfVal.toFixed(2),
-      mtwfVal.toFixed(2),
-      mtsf1_4.toFixed(2),
-      mtlfx.toFixed(2),
-      fraction.toFixed(2),
-      solarFraction.toFixed(2),
-      windFraction.toFixed(2),
-      "0", // placeholder
-      mtString
-    ];
-
-    dataRows.push({ rowData, mtDate });
+// Build dataRows
+rows.forEach(row => {
+  // ⭐ Normalize keys
+  const cleanRow = {};
+  Object.keys(row).forEach(k => {
+    cleanRow[k.trim()] = row[k];
   });
 
-      if (dataRows.length === 0) {
-        return;
-      }
+  const mtlfVal = parseFloat(cleanRow["MTLF"]) || 0;
+  const mtsfVal = parseFloat(cleanRow["MTSF"]) || 0;
+  const mtwfVal = parseFloat(cleanRow["MTWF"]) || 0;
+
+  if (!mtlfVal) return;
+
+  const mtsf1_4 = mtsfVal * 1.4;
+  const mtlfx = mtlfVal + mtsfVal * 0.4;
+  const fraction = mtlfx !== 0 ? (mtsf1_4 + mtwfVal) / mtlfx : 0;
+  const solarFraction = mtlfx !== 0 ? mtsf1_4 / mtlfx : 0;
+  const windFraction = fraction - solarFraction;
+
+  // Time conversion
+  const rawInterval = cleanRow["Interval"];
+  const [datePart, timePart] = rawInterval.split(" ");
+  const [month, day, year] = datePart.split("/").map(Number);
+  const [hour, minute, second] = timePart.split(":").map(Number);
+
+  const mtDate = new Date(year, month - 1, day, hour, minute, second);
+  mtDate.setHours(mtDate.getHours() - 1);
+
+  const mtString = toMountainISO(mtDate);
+
+  // Build row
+  const rowData = [
+    rawInterval,
+    mtlfVal.toFixed(2),
+    mtsfVal.toFixed(2),
+    mtwfVal.toFixed(2),
+    mtsf1_4.toFixed(2),
+    mtlfx.toFixed(2),
+    fraction.toFixed(2),
+    solarFraction.toFixed(2),
+    windFraction.toFixed(2),
+    "0",
+    mtString
+  ];
+
+  dataRows.push({ rowData, mtDate });
+});
+
+// ⭐ Keep only rows from today's midnight through +7 days
+const midnight = new Date();
+midnight.setHours(0, 0, 0, 0);
+
+const sevenDaysLater = new Date(midnight.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+dataRows = dataRows.filter(d => 
+  d.mtDate >= midnight && d.mtDate < sevenDaysLater
+);
+
+if (dataRows.length === 0) {
+  return;
+}
+
 
       dataRows.sort((a, b) => a.mtDate - b.mtDate);
 
@@ -480,8 +493,8 @@ const mtString = toMountainISO(mtDate);
 	const styles = getComputedStyle(document.documentElement);
 
 	const greenColor = styles.getPropertyValue("--green").trim();
-	const redColor   = "#C62828"; // you can define a --red if you want
-	const grayColor  = styles.getPropertyValue("--gray-dark").trim();
+	const redColor   = "#FF7979"; // you can define a --red if you want
+	const grayColor  = styles.getPropertyValue("--gray-light").trim();
 
 	statusBox.style.backgroundColor =
   	currentGreen === "1" ? greenColor :
@@ -525,10 +538,10 @@ const mtString = toMountainISO(mtDate);
           }
           greenWindowDiv.textContent =
             `Grid will be green in ${duration} hour${duration !== 1 ? "s" : ""}`;
-          greenWindowDiv.style.backgroundColor = "#444";
+          greenWindowDiv.style.backgroundColor = "#F7F7F7";
         } else {
           greenWindowDiv.textContent = "Current green status unknown.";
-          greenWindowDiv.style.backgroundColor = "#444";
+          greenWindowDiv.style.backgroundColor = "#F7F7F7";
         }
       }
 
@@ -571,9 +584,9 @@ const calendarPlainDiv = document.getElementById("calendarPlainStrip");
 let renderedDayCount = 0;
 
 if (calendarDayDiv && calendarNightDiv && calendarPlainDiv) {
-  calendarDayDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Day</h3>";
-  calendarNightDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>Night</h3>";
-  calendarPlainDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:30px;'>&nbsp;</h3>";
+  calendarDayDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:5px;'>Day</h3>";
+  calendarNightDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:5px;'>Night</h3>";
+  calendarPlainDiv.innerHTML = "<h3 style='margin-bottom: 8px;padding-right:5px;'>&nbsp;</h3>";
 
   const calendarMap = {}; // key: date string, value: { dayHours: [], nightHours: [] }
 
@@ -646,9 +659,11 @@ if (calendarDayDiv && calendarNightDiv && calendarPlainDiv) {
 
 // These should match your CSS:
 // .calendar-*- box width, gap between boxes, and header width
-const BOX_WIDTH = 102;      // .calendar-day/.calendar-night/.calendar-plain width
-const BOX_GAP = 10;         // gap: 10px in the flex container
-const HEADER_WIDTH = 60;    // h3 width in CSS
+const isMobile = window.innerWidth < 600;
+
+const BOX_WIDTH = isMobile ? window.innerWidth * 0.19 : 102;
+const BOX_GAP   = isMobile ? 10 : 10; // same gap
+const HEADER_WIDTH = isMobile ? 60 : 60;
 
 // total width = header + N * (box + gap)
 const calendarWidthPx =
@@ -696,115 +711,145 @@ if (chartCanvas && window.Chart) {
     fractionColors.push(color);
   });
 
-  const ctx = chartCanvas.getContext("2d");
+ const ctx = chartCanvas.getContext("2d");
 
-  new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: intervalLabels,
-      datasets: [
-        {
-          label: "Solar Fraction",
-          data: solarStack,
-          backgroundColor: yellow,
-          stack: "clean"
-        },
-        {
-          label: "Wind Fraction",
-          data: windStack,
-          backgroundColor: blue,
-          stack: "clean"
-        },
-        {
-          label: "Green Fraction",
-          type: "line",
-          order: 99,
-          data: fractionLine,
-          borderWidth: 7,
-          pointRadius: 0,
-          fill: false,
-          tension: 0.3,
-          segment: {
-            borderColor: ctx => {
-              const i = ctx.p0DataIndex;
-              return fractionColors[i] || "hsl(120, 100%, 5%)";
-            }
-          }
-        }
-      ]
-    },
-    options: {
-      responsive: false,          // important: don't shrink with window
-      maintainAspectRatio: false, // allow fixed height
-
-      plugins: {
-        legend: { position: "top" },
-        tooltip: {
-          mode: "index",
-          intersect: false,
-          callbacks: {
-            title: function(tooltipItems) {
-              const raw = tooltipItems[0].label;
-              const [datePart, timePart] = raw.split("T");
-              const [year, month, day] = datePart.split("-");
-              const hour = parseInt(timePart.split(":")[0]);
-
-              const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-              const monthLabel = monthNames[parseInt(month) - 1];
-              const dayLabel = parseInt(day);
-
-              const formattedHour =
-                hour === 0 ? "12 AM" :
-                hour < 12 ? `${hour} AM` :
-                hour === 12 ? "12 PM" :
-                `${hour - 12} PM`;
-
-              return `${monthLabel} ${dayLabel}, ${formattedHour}`;
-            },
-            label: function(context) {
-              const label = context.dataset.label || "";
-              const value = context.raw;
-              return `${label}: ${Math.round(value * 100)}%`;
-            }
-          }
-        }
+new Chart(ctx, {
+  type: "bar",
+  data: {
+    labels: intervalLabels,
+    datasets: [
+      {
+        label: "Solar Fraction",
+        data: solarStack,
+        backgroundColor: yellow,
+        borderColor: yellow,
+        borderWidth: 5,
+        stack: "clean"
       },
-      scales: {
-        x: {
-          stacked: true,
-          title: { display: true, text: "Date" },
-          ticks: {
-            callback: function(value, index) {
-              const raw = this.chart.data.labels[index];
-              const hourPart = raw.split("T")[1].split(":")[0];
-
-              if (hourPart === "00") {
-                const [year, month, day] = raw.split("T")[0].split("-");
-                const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                return `${monthNames[parseInt(month) - 1]} ${parseInt(day)}`;
-              }
-              return "";
-            },
-            autoSkip: false,
-            maxRotation: 0,
-            minRotation: 0
-          },
-          grid: { display: false }
-        },
-        y: {
-          stacked: true,
-          min: 0,
-          max: 1,
-          title: { display: true, text: "Percent Clean" },
-          grid: { display: false },
-          ticks: {
-            callback: value => Math.round(value * 100) + "%"
+      {
+        label: "Wind Fraction",
+        data: windStack,
+        backgroundColor: blue,
+        borderColor: blue,
+        borderWidth: 5,
+        stack: "clean"
+      },
+      {
+        label: "Green Fraction",
+        type: "line",
+        order: 99,
+        data: fractionLine,
+        borderWidth: 5,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.3,
+        borderColor: "hsl(120, 100%, 40%)",
+        segment: {
+          borderColor: ctx => {
+            const i = ctx.p0DataIndex;
+            return fractionColors[i] || "hsl(120, 100%, 40%)";
           }
         }
       }
+    ]
+  },
+
+  options: {
+    responsive: false,
+    maintainAspectRatio: false,
+
+    plugins: {
+      legend: { position: "top" },
+
+      tooltip: {
+        mode: "index",
+        intersect: false,
+        callbacks: {
+          title: function (tooltipItems) {
+            const raw = tooltipItems[0].label;
+            const [datePart, timePart] = raw.split("T");
+            const [year, month, day] = datePart.split("-");
+            const hour = parseInt(timePart.split(":")[0]);
+
+            const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            const monthLabel = monthNames[parseInt(month) - 1];
+            const dayLabel = parseInt(day);
+
+            const formattedHour =
+              hour === 0 ? "12 AM" :
+              hour < 12 ? `${hour} AM` :
+              hour === 12 ? "12 PM" :
+              `${hour - 12} PM`;
+
+            return `${monthLabel} ${dayLabel}, ${formattedHour}`;
+          },
+          label: function (context) {
+            const label = context.dataset.label || "";
+            const value = context.raw;
+            return `${label}: ${Math.round(value * 100)}%`;
+          }
+        }
+      }
+    },
+
+    scales: {
+      x: {
+        stacked: true,
+        title: { display: true, text: "Date", color: "#000000", 
+font: {
+    family: "Segoe UI, Arial, sans-serif",
+    weight: "normal"   // removes bold
+  }
+},
+        ticks: {
+          color: "#000000",
+          font: {
+    family: "Segoe UI, Arial, sans-serif",
+    weight: "normal"   // removes bold
+  }
+,
+          callback: function (value, index) {
+            if (index % 24 === 12) {
+              const raw = this.chart.data.labels[index];
+              const [year, month, day] = raw.split("T")[0].split("-");
+              const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+              return `${monthNames[parseInt(month) - 1]} ${parseInt(day)}`;
+            }
+            return "";
+          },
+          autoSkip: false,
+          maxRotation: 0,
+          minRotation: 0
+        },
+        grid: { color: "rgba(255,255,255,0.15)" }
+      },
+
+      y: {
+        stacked: true,
+        min: 0,
+        max: 1,
+        title: { display: true, text: "Percent Clean", color: "#000000", font: {
+    family: "Segoe UI, Arial, sans-serif",
+    weight: "normal"   // removes bold
+  }
+ },
+        ticks: {
+          color: "#000000",
+          font: {
+    family: "Segoe UI, Arial, sans-serif",
+    weight: "normal"   // removes bold
+  }
+,
+          callback: value => Math.round(value * 100) + "%"
+        },
+        grid: { color: "rgba(255,255,255,0.15)" }
+      }
     }
+  },
+
   });
-}    }
+}
+}
 
     // Run after page load
     window.addEventListener("load", importJSON);
